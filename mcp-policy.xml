@@ -17,6 +17,37 @@
 -->
 <policies>
   <inbound>
+    <!--
+      The APIM portal's MCP test client runs in a browser. Keep this policy
+      first so APIM can answer OPTIONS preflight requests before OAuth runs.
+    -->
+    <cors allow-credentials="true" terminate-unmatched-request="true">
+      <allowed-origins>
+        <origin>https://portal.azure.com</origin>
+        <origin>https://apimanagement.hosting.portal.azure.net</origin>
+      </allowed-origins>
+      <allowed-methods preflight-result-max-age="300">
+        <method>GET</method>
+        <method>POST</method>
+        <method>DELETE</method>
+        <method>OPTIONS</method>
+      </allowed-methods>
+      <allowed-headers>
+        <header>Accept</header>
+        <header>Authorization</header>
+        <header>Content-Type</header>
+        <header>Mcp-Protocol-Version</header>
+        <header>Mcp-Session-Id</header>
+        <header>Ocp-Apim-Subscription-Key</header>
+        <header>x-correlation-id</header>
+      </allowed-headers>
+      <expose-headers>
+        <header>Mcp-Session-Id</header>
+        <header>WWW-Authenticate</header>
+        <header>x-correlation-id</header>
+      </expose-headers>
+    </cors>
+
     <!-- Capture these values before <base /> so on-error can always use them. -->
     <set-variable name="correlationId" value='@(context.Request.Headers.GetValueOrDefault("x-correlation-id", context.RequestId.ToString()))' />
     <set-variable name="mcpRequestId" value='@{
