@@ -5,12 +5,9 @@
   Streamable HTTP when creating the MCP server in APIM. Backend routing belongs
   to the native MCP configuration, not this policy.
 
-  Before applying this policy, create the following in APIM Credential manager:
-    Provider:   github-mcp (GitHub, OAuth 2.0 authorization code grant)
-    Connection: github-mcp-connection
-
-  The GitHub OAuth app callback URL must be:
-    https://authorization-manager.consent.azure-apim.net/redirect/apim/<APIM-NAME>
+  GitHub's remote MCP server implements OAuth discovery. The client follows that
+  flow through APIM, so this policy preserves the client's Authorization header
+  instead of using a shared APIM Credential Manager connection.
 
   This policy never reads context.Response.Body. MCP responses are streamed, and
   buffering the response body breaks Streamable HTTP.
@@ -67,20 +64,7 @@
 
     <base />
 
-    <!--
-      Obtain the GitHub user token from APIM Credential manager. This replaces
-      the Entra on-behalf-of flow, which cannot mint a GitHub access token.
-    -->
-    <get-authorization-context
-      provider-id="github-mcp"
-      authorization-id="github-mcp-connection"
-      context-variable-name="githubAuthorization"
-      identity-type="managed"
-      ignore-error="false" />
-
-    <set-header name="Authorization" exists-action="override">
-      <value>@("Bearer " + ((Authorization)context.Variables.GetValueOrDefault("githubAuthorization"))?.AccessToken)</value>
-    </set-header>
+    <!-- Preserve the caller's Authorization header for GitHub MCP OAuth. -->
     <set-header name="User-Agent" exists-action="override">
       <value>Azure-API-Management-MCP</value>
     </set-header>
@@ -102,11 +86,13 @@
     </set-header>
 
     <!--
-      Convert upstream HTTP failures to JSON-RPC 2.0 errors. Do not include or
-      inspect the upstream response body because doing so buffers MCP streams.
+      Convert non-authentication upstream HTTP failures to JSON-RPC 2.0 errors.
+      Preserve 401 and 403 responses because MCP OAuth clients require the HTTP
+      status and WWW-Authenticate header to discover and complete authorization.
+      Do not inspect the response body because doing so buffers MCP streams.
     -->
     <choose>
-      <when condition='@(context.Response != null &amp;&amp; (int)context.Response.StatusCode >= 300)'>
+      <when condition='@(context.Response != null &amp;&amp; (int)context.Response.StatusCode >= 300 &amp;&amp; (int)context.Response.StatusCode != 401 &amp;&amp; (int)context.Response.StatusCode != 403)'>
         <set-header name="Content-Type" exists-action="override">
           <value>application/json</value>
         </set-header>
@@ -120,13 +106,7 @@
           var category = "upstream";
           var retryable = false;
 
-          if (status == 401 || status == 403)
-          {
-            code = -32001;
-            message = "The upstream MCP server rejected the configured GitHub credential.";
-            category = "authentication";
-          }
-          else if (status == 429)
+          if (status == 429)
           {
             code = -32002;
             message = "The upstream MCP server rate limit was exceeded.";
