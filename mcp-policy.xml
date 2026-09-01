@@ -9,8 +9,9 @@
   flow through APIM, so this policy preserves the client's Authorization header
   instead of using a shared APIM Credential Manager connection.
 
-  This policy never reads context.Response.Body. MCP responses are streamed, and
-  buffering the response body breaks Streamable HTTP.
+  This policy reads context.Response.Body only for an upstream 403 that it
+  replaces. Successful MCP responses remain untouched because buffering those
+  responses breaks Streamable HTTP.
 -->
 <policies>
   <inbound>
@@ -86,13 +87,14 @@
     </set-header>
 
     <!--
-      Convert non-authentication upstream HTTP failures to JSON-RPC 2.0 errors.
-      Preserve 401 and 403 responses because MCP OAuth clients require the HTTP
-      status and WWW-Authenticate header to discover and complete authorization.
-      Do not inspect the response body because doing so buffers MCP streams.
+      Convert upstream HTTP failures to JSON-RPC 2.0 errors. Preserve 401
+      responses because MCP OAuth clients require the HTTP status and
+      WWW-Authenticate header to discover and complete authorization. For a 403,
+      read only that finite error response and return its message to the client.
+      Successful MCP responses remain untouched and stream without buffering.
     -->
     <choose>
-      <when condition='@(context.Response != null &amp;&amp; (int)context.Response.StatusCode >= 300 &amp;&amp; (int)context.Response.StatusCode != 401 &amp;&amp; (int)context.Response.StatusCode != 403)'>
+      <when condition='@(context.Response != null &amp;&amp; (int)context.Response.StatusCode >= 300 &amp;&amp; (int)context.Response.StatusCode != 401)'>
         <set-header name="Content-Type" exists-action="override">
           <value>application/json</value>
         </set-header>
@@ -106,7 +108,52 @@
           var category = "upstream";
           var retryable = false;
 
-          if (status == 429)
+          if (status == 403)
+          {
+            code = -32001;
+            category = "authorization";
+            message = "The upstream MCP server denied access.";
+
+            try
+            {
+              var upstreamBody = context.Response.Body.As&lt;string&gt;(preserveContent: true);
+              if (!string.IsNullOrWhiteSpace(upstreamBody))
+              {
+                var upstreamMessage = upstreamBody.Trim();
+
+                try
+                {
+                  var upstreamJson = JObject.Parse(upstreamBody);
+                  var candidate = upstreamJson.SelectToken("error.message")
+                    ?? upstreamJson["message"]
+                    ?? upstreamJson["error_description"]
+                    ?? upstreamJson["detail"]
+                    ?? upstreamJson["error"];
+
+                  if (candidate != null &amp;&amp; candidate.Type != JTokenType.Object &amp;&amp; candidate.Type != JTokenType.Array)
+                  {
+                    upstreamMessage = candidate.ToString();
+                  }
+                }
+                catch
+                {
+                  // The upstream error can be plain text rather than JSON.
+                }
+
+                if (!string.IsNullOrWhiteSpace(upstreamMessage))
+                {
+                  message = upstreamMessage.Length &gt; 4096
+                    ? upstreamMessage.Substring(0, 4096)
+                    : upstreamMessage;
+                }
+              }
+            }
+            catch
+            {
+              // Keep the safe fallback when the upstream response has no body.
+            }
+          }
+          else if (status == 429)
           {
             code = -32002;
             message = "The upstream MCP server rate limit was exceeded.";
