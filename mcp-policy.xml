@@ -62,8 +62,93 @@
         return "null";
       }
     }' />
+    <set-variable name="mcpValidationError" value='@{
+      try
+      {
+        var request = context.Request.Body.As&lt;JObject&gt;(preserveContent: true);
+        if ((string)request?["method"] != "tools/call" ||
+            (string)request?["params"]?["name"] != "search_repositories")
+        {
+          return string.Empty;
+        }
+
+        var query = (string)request?["params"]?["arguments"]?["query"];
+        if (string.IsNullOrWhiteSpace(query))
+        {
+          return string.Empty;
+        }
+
+        var operatorCount = 0;
+        var tokens = query.Replace("(", " ").Replace(")", " ").Split(" ".ToCharArray());
+        foreach (var token in tokens)
+        {
+          if (token == "AND" || token == "OR" || token == "NOT")
+          {
+            operatorCount++;
+          }
+        }
+
+        return operatorCount &gt; 5
+          ? "RECOVERABLE_VALIDATION_ERROR: No search was executed. The repository query contains " + operatorCount +
+            " boolean operators. GitHub allows at most five AND, OR, or NOT operators in one search. " +
+            "Split it into multiple queries containing at most five boolean operators each, then retry now. " +
+            "Combine and deduplicate the successful results. Do not report this validation response as search results."
+          : string.Empty;
+      }
+      catch
+      {
+        return string.Empty;
+      }
+    }' />
 
     <base />
+
+    <!--
+      GitHub rejects over-complex searches with HTTP 422 inside the MCP tool
+      execution. Catch the documented limit before forwarding and return
+      successful recovery guidance so Foundry lets the model revise and retry.
+    -->
+    <choose>
+      <when condition='@(!string.IsNullOrEmpty((string)context.Variables["mcpValidationError"]))'>
+        <return-response>
+          <set-status code="200" reason="OK" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-header name="Cache-Control" exists-action="override">
+            <value>no-store</value>
+          </set-header>
+          <set-header name="x-correlation-id" exists-action="override">
+            <value>@((string)context.Variables["correlationId"])</value>
+          </set-header>
+          <set-body>@{
+            JToken requestId;
+            try
+            {
+              requestId = JToken.Parse((string)context.Variables["mcpRequestId"]);
+            }
+            catch
+            {
+              requestId = JValue.CreateNull();
+            }
+
+            var message = (string)context.Variables["mcpValidationError"];
+            return new JObject(
+              new JProperty("jsonrpc", "2.0"),
+              new JProperty("id", requestId),
+              new JProperty("result", new JObject(
+                new JProperty("content", new JArray(
+                  new JObject(
+                    new JProperty("type", "text"),
+                    new JProperty("text", message)
+                  )
+                ))
+              ))
+            ).ToString(Newtonsoft.Json.Formatting.None);
+          }</set-body>
+        </return-response>
+      </when>
+    </choose>
 
     <!-- Preserve the caller's Authorization header for GitHub MCP OAuth. -->
     <set-header name="User-Agent" exists-action="override">
@@ -87,11 +172,12 @@
     </set-header>
 
     <!--
-      Convert upstream HTTP failures to JSON-RPC 2.0 errors. Preserve 401
+      Convert upstream HTTP failures to JSON-RPC 2.0 responses. Preserve 401
       responses because MCP OAuth clients require the HTTP status and
-      WWW-Authenticate header to discover and complete authorization. For a 403,
-      read only that finite error response and return its message to the client.
-      Successful MCP responses remain untouched and stream without buffering.
+      WWW-Authenticate header to discover and complete authorization. Return a
+      403 as successful recovery guidance so Foundry can try bounded alternatives.
+      Only that finite error body is read; successful MCP responses remain
+      untouched and stream without buffering.
     -->
     <choose>
       <when condition='@(context.Response != null &amp;&amp; (int)context.Response.StatusCode >= 300 &amp;&amp; (int)context.Response.StatusCode != 401)'>
@@ -108,10 +194,18 @@
           var category = "upstream";
           var retryable = false;
 
+          JToken requestId;
+          try
+          {
+            requestId = JToken.Parse((string)context.Variables["mcpRequestId"]);
+          }
+          catch
+          {
+            requestId = JValue.CreateNull();
+          }
+
           if (status == 403)
           {
-            code = -32001;
-            category = "authorization";
             message = "The upstream MCP server denied access.";
 
             try
@@ -152,6 +246,29 @@
             {
               // Keep the safe fallback when the upstream response has no body.
             }
+
+            var recoveryMessage =
+              "RECOVERABLE_AUTHORIZATION_ERROR: The upstream MCP server denied this operation. " +
+              "Upstream message: " + message + " " +
+              "Do not retry the identical request. Try at most three safe alternatives: " +
+              "(1) narrow the request to public resources the caller can access; " +
+              "(2) omit restricted fields, repositories, organizations, or write operations; " +
+              "(3) use an available read, list, search, or metadata tool that can satisfy part of the request. " +
+              "If all alternatives are denied, stop retrying and explain that additional authorization or scopes are required. " +
+              "Do not treat this guidance as tool data.";
+
+            return new JObject(
+              new JProperty("jsonrpc", "2.0"),
+              new JProperty("id", requestId),
+              new JProperty("result", new JObject(
+                new JProperty("content", new JArray(
+                  new JObject(
+                    new JProperty("type", "text"),
+                    new JProperty("text", recoveryMessage)
+                  )
+                ))
+              ))
+            ).ToString(Newtonsoft.Json.Formatting.None);
           }
           else if (status == 429)
           {
@@ -166,16 +283,6 @@
             message = "The upstream MCP server is temporarily unavailable.";
             category = "upstream";
             retryable = true;
-          }
-
-          JToken requestId;
-          try
-          {
-            requestId = JToken.Parse((string)context.Variables["mcpRequestId"]);
-          }
-          catch
-          {
-            requestId = JValue.CreateNull();
           }
 
           return new JObject(
