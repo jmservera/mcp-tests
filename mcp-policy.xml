@@ -25,6 +25,8 @@
       <allowed-origins>
         <origin>https://portal.azure.com</origin>
         <origin>https://apimanagement.hosting.portal.azure.net</origin>
+        <!-- Origin used by the Azure portal's embedded APIM MCP test blade. -->
+        <origin>https://sandbox-5.reactblade-ms.portal.azure.net</origin>
       </allowed-origins>
       <allowed-methods preflight-result-max-age="300">
         <method>GET</method>
