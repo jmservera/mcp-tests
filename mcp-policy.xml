@@ -1,208 +1,181 @@
-<!-- APIM policy: OAuth On-Behalf-Of, retries for 5xx/network errors, structured JSON error envelope with HTTP 200 -->
+<!--
+  Policy for an APIM "Expose an existing MCP server" API.
+
+  Configure https://api.githubcopilot.com/mcp/ as the backend URL and select
+  Streamable HTTP when creating the MCP server in APIM. Backend routing belongs
+  to the native MCP configuration, not this policy.
+
+  Before applying this policy, create the following in APIM Credential manager:
+    Provider:   github-mcp (GitHub, OAuth 2.0 authorization code grant)
+    Connection: github-mcp-connection
+
+  The GitHub OAuth app callback URL must be:
+    https://authorization-manager.consent.azure-apim.net/redirect/apim/<APIM-NAME>
+
+  This policy never reads context.Response.Body. MCP responses are streamed, and
+  buffering the response body breaks Streamable HTTP.
+-->
 <policies>
   <inbound>
-    <!-- Generate a correlation id for logs and responses -->
-    <set-variable name="correlationId" value="@(Guid.NewGuid().ToString())" />
-    <!-- Capture incoming Authorization (on-behalf-of assertion / user token) -->
-    <set-variable name="obo_assertion" value="@(context.Request.Headers.GetValueOrDefault("Authorization","").StartsWith("Bearer ") ? context.Request.Headers.GetValueOrDefault("Authorization","").Substring("Bearer ".Length) : String.Empty)" />
-    <!-- Optionally validate presence of assertion and short-circuit if missing -->
-    <choose>
-      <when condition="@(String.IsNullOrEmpty((string)context.Variables["obo_assertion"]))">
-        <return-response>
-          <set-status code="200" reason="OK" />
-          <set-header name="Content-Type" exists-action="override">
-            <value>application/json</value>
-          </set-header>
-          <set-body>{
-  "status": "error",
-  "severity": "non-recoverable",
-  "category": "auth",
-  "backendStatus": null,
-  "code": "missing_obo_assertion",
-  "message": "Missing on-behalf-of assertion (Authorization header).",
-  "correlationId": "@(context.Variables["correlationId"])",
-  "details": {}
-}</set-body>
-        </return-response>
-      </when>
-    </choose>
-    <!-- Preserve incoming body for backend call -->
+    <!-- Capture these values before <base /> so on-error can always use them. -->
+    <set-variable name="correlationId" value='@(context.Request.Headers.GetValueOrDefault("x-correlation-id", context.RequestId.ToString()))' />
+    <set-variable name="mcpRequestId" value='@{
+      try
+      {
+        var request = context.Request.Body.As&lt;JObject&gt;(preserveContent: true);
+        var id = request?["id"];
+        return id == null ? "null" : id.ToString(Newtonsoft.Json.Formatting.None);
+      }
+      catch
+      {
+        return "null";
+      }
+    }' />
+
     <base />
+
+    <!--
+      Obtain the GitHub user token from APIM Credential manager. This replaces
+      the Entra on-behalf-of flow, which cannot mint a GitHub access token.
+    -->
+    <get-authorization-context
+      provider-id="github-mcp"
+      authorization-id="github-mcp-connection"
+      context-variable-name="githubAuthorization"
+      identity-type="managed"
+      ignore-error="false" />
+
+    <set-header name="Authorization" exists-action="override">
+      <value>@("Bearer " + ((Authorization)context.Variables.GetValueOrDefault("githubAuthorization"))?.AccessToken)</value>
+    </set-header>
+    <set-header name="User-Agent" exists-action="override">
+      <value>Azure-API-Management-MCP</value>
+    </set-header>
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables["correlationId"])</value>
+    </set-header>
   </inbound>
 
+  <!-- The native APIM MCP server owns backend routing and Streamable HTTP. -->
   <backend>
-    <!-- Acquire AAD token using the On-Behalf-Of flow:
-         - client_id and client_secret are stored in named values (secrets) in APIM
-         - scope/resource is backend resource (e.g., https://mcp.example.com/.default)
-         The request posts to AAD token endpoint. -->
-    <set-variable name="aadTokenEndpoint" value="https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token" />
-    <set-variable name="clientId" value="@(context.Configuration.GetValueOrDefault<string>("aad-client-id"))" />
-    <set-variable name="clientSecret" value="@(context.Configuration.GetValueOrDefault<string>("aad-client-secret"))" />
-    <set-variable name="scope" value="@(context.Configuration.GetValueOrDefault<string>("aad-scope"))" />
-
-    <send-request mode="new" response-variable-name="oboTokenResponse" timeout="20" ignore-error="true">
-      <set-url>@(context.Variables["aadTokenEndpoint"])</set-url>
-      <set-method>POST</set-method>
-      <set-header name="Content-Type" exists-action="override">
-        <value>application/x-www-form-urlencoded</value>
-      </set-header>
-      <set-body>@($"client_id={System.Net.WebUtility.UrlEncode((string)context.Variables["clientId"])}&client_secret={System.Net.WebUtility.UrlEncode((string)context.Variables["clientSecret"])}&grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&requested_token_use=on_behalf_of&assertion={System.Net.WebUtility.UrlEncode((string)context.Variables["obo_assertion"])}&scope={System.Net.WebUtility.UrlEncode((string)context.Variables["scope"])}")</set-body>
-    </send-request>
-
-    <!-- Evaluate token acquisition success -->
-    <choose>
-      <when condition="@(context.Variables.ContainsKey("oboTokenResponse") && context.Variables["oboTokenResponse"] != null && ((IResponse)context.Variables["oboTokenResponse"]).StatusCode == 200)">
-        <set-variable name="backendAccessToken" value="@(((IResponse)context.Variables["oboTokenResponse"]).Body.As<JObject>()["access_token"]?.ToString() ?? String.Empty)" />
-      </when>
-      <when condition="@(true)">
-        <return-response>
-          <set-status code="200" reason="OK" />
-          <set-header name="Content-Type" exists-action="override">
-            <value>application/json</value>
-          </set-header>
-          <set-body>{
-  "status": "error",
-  "severity": "non-recoverable",
-  "category": "auth",
-  "backendStatus": @(context.Variables.ContainsKey("oboTokenResponse") ? ((IResponse)context.Variables["oboTokenResponse"]).StatusCode.ToString() : "null"),
-  "code": "obo_token_acquisition_failed",
-  "message": "Failed to acquire on-behalf-of token from AAD.",
-  "correlationId": "@(context.Variables["correlationId"])",
-  "details": {
-    "tokenResponseBody": @(context.Variables.ContainsKey("oboTokenResponse") ? ((IResponse)context.Variables["oboTokenResponse"]).Body.As<string>() : "null")
-  }
-}</set-body>
-        </return-response>
-      </when>
-    </choose>
-
-    <!-- Set Authorization header for backend call -->
-    <set-header name="Authorization" exists-action="override">
-      <value>@($"Bearer {(string)context.Variables["backendAccessToken"]}")</value>
-    </set-header>
-
-    <!-- Retry block for backend call: retry only on 5xx or network errors.
-         Using exponential backoff: interval=2s, delta=2s, max-interval=16s, count=3 -->
-    <retry condition="@(context.Response == null || ((int)context.Response.StatusCode >= 500 && (int)context.Response.StatusCode < 600))" count="3" interval="2" delta="2" max-interval="16">
-      <!-- Call the upstream MCP backend; this is the proxied request -->
-      <set-backend-service base-url="https://mcp.backend.example" />
-      <!-- preserve method and body, headers -->
-    </retry>
-
+    <base />
   </backend>
 
   <outbound>
-    <!-- If backend returned a success (2xx), forward the backend body wrapped in success envelope -->
+    <base />
+
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@((string)context.Variables["correlationId"])</value>
+    </set-header>
+
+    <!--
+      Convert upstream HTTP failures to JSON-RPC 2.0 errors. Do not include or
+      inspect the upstream response body because doing so buffers MCP streams.
+    -->
     <choose>
-      <when condition="@(context.Response != null && ((int)context.Response.StatusCode >= 200 && (int)context.Response.StatusCode &lt; 300))">
+      <when condition='@(context.Response != null &amp;&amp; (int)context.Response.StatusCode >= 300)'>
         <set-header name="Content-Type" exists-action="override">
           <value>application/json</value>
         </set-header>
-        <set-body>{
-  "status": "ok",
-  "backendStatus": @(context.Response.StatusCode),
-  "correlationId": "@(context.Variables["correlationId"])",
-  "payload": @(context.Response.Body.As<string>())
-}</set-body>
-        <!-- ensure returned HTTP status is 200 -->
+        <set-header name="Cache-Control" exists-action="override">
+          <value>no-store</value>
+        </set-header>
+        <set-body>@{
+          var status = (int)context.Response.StatusCode;
+          var code = -32000;
+          var message = "The upstream MCP server returned an HTTP error.";
+          var category = "upstream";
+          var retryable = false;
+
+          if (status == 401 || status == 403)
+          {
+            code = -32001;
+            message = "The upstream MCP server rejected the configured GitHub credential.";
+            category = "authentication";
+          }
+          else if (status == 429)
+          {
+            code = -32002;
+            message = "The upstream MCP server rate limit was exceeded.";
+            category = "rate_limit";
+            retryable = true;
+          }
+          else if (status >= 500)
+          {
+            code = -32003;
+            message = "The upstream MCP server is temporarily unavailable.";
+            category = "upstream";
+            retryable = true;
+          }
+
+          JToken requestId;
+          try
+          {
+            requestId = JToken.Parse((string)context.Variables["mcpRequestId"]);
+          }
+          catch
+          {
+            requestId = JValue.CreateNull();
+          }
+
+          return new JObject(
+            new JProperty("jsonrpc", "2.0"),
+            new JProperty("id", requestId),
+            new JProperty("error", new JObject(
+              new JProperty("code", code),
+              new JProperty("message", message),
+              new JProperty("data", new JObject(
+                new JProperty("category", category),
+                new JProperty("httpStatus", status),
+                new JProperty("retryable", retryable),
+                new JProperty("correlationId", (string)context.Variables["correlationId"])
+              ))
+            ))
+          ).ToString(Newtonsoft.Json.Formatting.None);
+        }</set-body>
         <set-status code="200" reason="OK" />
       </when>
-
-      <when condition="@(context.Response != null)">
-        <!-- Non-2xx backend response reached after retries -->
-        <set-variable name="backendStatus" value="@(context.Response.StatusCode.ToString())" />
-        <set-variable name="backendBody" value="@(context.Response.Body.As<string>())" />
-
-        <!-- Classify error severity & category -->
-        <choose>
-          <when condition="@( (int)context.Response.StatusCode == 401 || (int)context.Response.StatusCode == 403 )">
-            <set-variable name="severity" value="non-recoverable" />
-            <set-variable name="category" value="auth" />
-            <set-variable name="code" value="auth_failure" />
-          </when>
-          <when condition="@( (int)context.Response.StatusCode >= 400 && (int)context.Response.StatusCode &lt; 500 )">
-            <set-variable name="severity" value="non-recoverable" />
-            <set-variable name="category" value="client" />
-            <set-variable name="code" value="client_error" />
-          </when>
-          <when condition="@( (int)context.Response.StatusCode >= 500 )">
-            <set-variable name="severity" value="recoverable" />
-            <set-variable name="category" value="server" />
-            <set-variable name="code" value="server_error" />
-          </when>
-          <otherwise>
-            <set-variable name="severity" value="recoverable" />
-            <set-variable name="category" value="network" />
-            <set-variable name="code" value="network_error" />
-          </otherwise>
-        </choose>
-
-        <set-header name="Content-Type" exists-action="override">
-          <value>application/json</value>
-        </set-header>
-
-        <set-body>{
-  "status": "error",
-  "severity": "@(context.Variables["severity"])",
-  "category": "@(context.Variables["category"])",
-  "backendStatus": @(context.Variables["backendStatus"]),
-  "code": "@(context.Variables["code"])",
-  "message": "@( (string.IsNullOrEmpty((string)context.Variables["backendBody"]) ? "Upstream service returned an error." : ((string)context.Variables["backendBody"]).Replace("\n"," ").Replace("\r"," ").Replace("\"","'") ) )",
-  "correlationId": "@(context.Variables["correlationId"])",
-  "details": {
-    "attempts": @(context.Variables.ContainsKey("retry-count") ? context.Variables["retry-count"] : "unknown"),
-    "backendBodySample": @( (string)context.Variables["backendBody"] != null && ((string)context.Variables["backendBody"]).Length &lt; 1000 ? ((string)context.Variables["backendBody"]) : (((string)context.Variables["backendBody"]) != null ? (((string)context.Variables["backendBody"]).Substring(0,1000) + "...") : "" ) )
-  }
-}</set-body>
-
-        <!-- Force HTTP 200 to satisfy Foundry Agent envelope expectation -->
-        <set-status code="200" reason="OK" />
-      </when>
-
-      <otherwise>
-        <!-- No response object (network failure after retries) => produce recoverable network error envelope -->
-        <set-header name="Content-Type" exists-action="override">
-          <value>application/json</value>
-        </set-header>
-        <set-body>{
-  "status": "error",
-  "severity": "recoverable",
-  "category": "network",
-  "backendStatus": null,
-  "code": "no_response_from_backend",
-  "message": "No response received from upstream backend after retries.",
-  "correlationId": "@(context.Variables["correlationId"])",
-  "details": {}
-}</set-body>
-        <set-status code="200" reason="OK" />
-      </otherwise>
     </choose>
   </outbound>
 
   <on-error>
-    <!-- Handle unexpected policy errors and return structured envelope -->
     <set-header name="Content-Type" exists-action="override">
       <value>application/json</value>
     </set-header>
+    <set-header name="Cache-Control" exists-action="override">
+      <value>no-store</value>
+    </set-header>
+    <set-header name="x-correlation-id" exists-action="override">
+      <value>@(context.Variables.GetValueOrDefault&lt;string&gt;("correlationId", context.RequestId.ToString()))</value>
+    </set-header>
+    <set-body>@{
+      var correlationId = context.Variables.GetValueOrDefault&lt;string&gt;("correlationId", context.RequestId.ToString());
+      var serializedRequestId = context.Variables.GetValueOrDefault&lt;string&gt;("mcpRequestId", "null");
+      JToken requestId;
 
-<set-variable name="responseCorrelationId" value="@( context.Variables.ContainsKey(\"correlationId\") ? (string)context.Variables[\"correlationId\"] : Guid.NewGuid().ToString() )" />
-<set-variable name="responseLastError" value="@( context.LastError != null ? context.LastError.Message : \"unknown\" )" />
+      try
+      {
+        requestId = JToken.Parse(serializedRequestId);
+      }
+      catch
+      {
+        requestId = JValue.CreateNull();
+      }
 
-<set-body><![CDATA[
-{
-  "status": "error",
-  "severity": "non-recoverable",
-  "category": "gateway",
-  "backendStatus": null,
-  "code": "policy_execution_error",
-  "message": "An error occurred processing the request in API Management.",
-  "correlationId": "@(context.Variables[\"responseCorrelationId\"])",
-  "details": {
-    "lastError": "@(context.Variables[\"responseLastError\"])"
-  }
-}
-]]></set-body>
-
+      return new JObject(
+        new JProperty("jsonrpc", "2.0"),
+        new JProperty("id", requestId),
+        new JProperty("error", new JObject(
+          new JProperty("code", -32603),
+          new JProperty("message", "API Management could not process the MCP request."),
+          new JProperty("data", new JObject(
+            new JProperty("category", "gateway"),
+            new JProperty("retryable", false),
+            new JProperty("correlationId", correlationId)
+          ))
+        ))
+      ).ToString(Newtonsoft.Json.Formatting.None);
+    }</set-body>
     <set-status code="200" reason="OK" />
   </on-error>
 </policies>
