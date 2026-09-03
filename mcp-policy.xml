@@ -82,7 +82,8 @@
         var tokens = query.Replace("(", " ").Replace(")", " ").Split(" ".ToCharArray());
         foreach (var token in tokens)
         {
-          if (token == "AND" || token == "OR" || token == "NOT")
+          var normalizedToken = token.ToUpperInvariant();
+          if (normalizedToken == "AND" || normalizedToken == "OR" || normalizedToken == "NOT")
           {
             operatorCount++;
           }
@@ -137,12 +138,14 @@
               new JProperty("jsonrpc", "2.0"),
               new JProperty("id", requestId),
               new JProperty("result", new JObject(
+                new JProperty("resultType", "complete"),
                 new JProperty("content", new JArray(
                   new JObject(
                     new JProperty("type", "text"),
                     new JProperty("text", message)
                   )
                 ))
+                // ,new JProperty("isError", true) <- Workaround to make this compatible with Foundry
               ))
             ).ToString(Newtonsoft.Json.Formatting.None);
           }</set-body>
