@@ -17,6 +17,8 @@ from langchain.mcp import MCPAdapter
 from langchain.tools import tool
 from langchain_openai import AzureChatOpenAI
 
+from telemetry import AgentTelemetry, add_conversation_events
+
 
 DEFAULT_PROMPT = (
     "After identifying my username, make the first search_repositories call with this query verbatim. Do not split or simplify it:"
@@ -105,11 +107,12 @@ async def discover_mcp_tools(adapter: MCPAdapter, timeout: float) -> list:
         raise
 
 
-async def invoke_agent(agent, prompt: str, timeout: float):
+async def invoke_agent(agent, prompt: str, timeout: float, callbacks=None):
     try:
         async with asyncio.timeout(timeout):
             return await agent.ainvoke(
-                {"messages": [{"role": "user", "content": prompt}]}
+                {"messages": [{"role": "user", "content": prompt}]},
+                config={"callbacks": callbacks or []},
             )
     except TimeoutError as exc:
         raise HarnessStageTimeout("agent.run", timeout) from exc
@@ -216,6 +219,7 @@ async def run(prompt: str) -> None:
 
     adapter = MCPAdapter(create_mcp_client())
     entered = False
+    telemetry = None
     try:
         mcp_tools = await discover_mcp_tools(adapter, mcp_timeout)
         entered = True
@@ -236,9 +240,25 @@ async def run(prompt: str) -> None:
             tools=[*mcp_tools, code_interpreter],
             system_prompt=load_instructions(),
         )
-        result = await invoke_agent(agent, prompt, agent_timeout)
+        if enabled("TELEMETRY_ENABLED", True):
+            telemetry = AgentTelemetry({tool.name for tool in mcp_tools})
+            with telemetry.tracer.start_as_current_span("invoke.agent") as span:
+                span.set_attribute("gen_ai.operation.name", "invoke_agent")
+                span.set_attribute(
+                    "gen_ai.agent.name", "GitHubRepositoryDiscovery"
+                )
+                result = await invoke_agent(
+                    agent, prompt, agent_timeout, [telemetry.handler]
+                )
+                add_conversation_events(
+                    span, result["messages"], telemetry.include_content
+                )
+        else:
+            result = await invoke_agent(agent, prompt, agent_timeout)
         print(result["messages"][-1].content)
     finally:
+        if telemetry is not None:
+            telemetry.shutdown()
         if entered:
             await adapter.__aexit__(None, None, None)
 

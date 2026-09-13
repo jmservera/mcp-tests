@@ -35,4 +35,16 @@ MCP_SERVER_URL=https://127.0.0.1:1/mcp/ dotnet run
 
 The console writes `mcp.connect`, `mcp.tools`, or `harness.failure` records without logging the token.
 
+## Observe agent and MCP recovery
+
+OpenTelemetry tracing is enabled by default and writes agent, model, and `execute_tool` spans to the console. An MCP failure appears as an errored tool span; subsequent `chat` or `execute_tool` spans in the same trace show how the agent reacted and whether it recovered.
+
+By default, spans contain metadata but exclude prompts, tool arguments, and results. To include the internal conversation and the structured MCP error result for local debugging:
+
+```bash
+TELEMETRY_INCLUDE_CONTENT=true dotnet run
+```
+
+Treat content-enabled telemetry as sensitive. To send traces to an OTLP collector instead of relying only on console output, set `OTEL_EXPORTER_OTLP_ENDPOINT`; set `TELEMETRY_CONSOLE=false` if console spans are not needed. Set `TELEMETRY_ENABLED=false` to disable instrumentation.
+
 Official docs: [MAF Azure OpenAI provider](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/model-providers/azure-openai), [MAF MCP tools](https://learn.microsoft.com/en-us/agent-framework/agents/tools/local-mcp-tools), and [Code Interpreter](https://learn.microsoft.com/en-us/agent-framework/agents/tools/code-interpreter).

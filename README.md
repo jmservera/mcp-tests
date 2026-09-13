@@ -49,6 +49,8 @@ The hosted endpoint supports OAuth discovery. The local code examples also accep
 
 The LangChain and Microsoft Agent Framework examples load their local `.env` file before configuration and use `DefaultAzureCredential` for Azure OpenAI. Managed identity is used when deployed to Azure; local developers can authenticate with `az login`. Both use `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT_NAME`, with optional `AZURE_CLIENT_ID` for a user-assigned managed identity.
 
+Both executable examples emit OpenTelemetry-compatible traces for model and tool activity. Content is excluded by default; set `TELEMETRY_INCLUDE_CONTENT=true` only in a secured local environment to capture the internal message sequence, tool arguments, and structured MCP error results.
+
 ## Documentation reviewed
 
 - [LangChain AzureChatOpenAI](https://docs.langchain.com/oss/python/integrations/chat/azure_chat_openai)

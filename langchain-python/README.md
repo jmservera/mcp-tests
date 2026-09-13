@@ -36,4 +36,17 @@ The local `code_interpreter` tool validates JSON metadata, performs the determin
 
 `MCP_TIMEOUT_SECONDS` (default `30`) limits only MCP connection and tool discovery. `AGENT_RUN_TIMEOUT_SECONDS` (default `180`) independently limits model reasoning, MCP tool calls, scoring, and chart generation. Timeout failures include a `stage` of either `mcp.discovery` or `agent.run`, so slow healthy agent work is not mislabeled as MCP discovery failure.
 
+## Observe agent and MCP recovery
+
+The app records OpenTelemetry spans as JSON Lines in `artifacts/telemetry.jsonl`. The trace includes the root agent invocation, each model call, each tool call, tool status, exceptions, and the final message sequence. An MCP error appears as an errored `execute_tool.<name>` span; later `chat` or tool spans with the same `trace_id` show whether the agent recovered.
+
+Prompt text, tool arguments, tool results, and message content are excluded by default. To record the internal conversation and structured MCP error result for local debugging:
+
+```bash
+TELEMETRY_INCLUDE_CONTENT=true python app.py
+```
+
+Treat content-enabled telemetry as sensitive. Set `TELEMETRY_FILE` to change the JSONL path. If `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the same spans are also exported over OTLP.
+Set `TELEMETRY_ENABLED=false` to disable instrumentation.
+
 Official docs: [LangChain AzureChatOpenAI](https://docs.langchain.com/oss/python/integrations/chat/azure_chat_openai), [LangChain MCP](https://docs.langchain.com/oss/python/langchain/mcp), [authentication](https://docs.langchain.com/oss/python/langchain/mcp/auth), and [tool errors](https://docs.langchain.com/oss/python/langchain/mcp/tools#errors).

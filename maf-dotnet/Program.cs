@@ -5,6 +5,9 @@ using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using OpenAI.Responses;
+using OpenTelemetry;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using System.ClientModel.Primitives;
 
 const string defaultPrompt =
@@ -15,6 +18,49 @@ const string defaultPrompt =
 static string Required(string name) =>
     Environment.GetEnvironmentVariable(name)
     ?? throw new InvalidOperationException($"{name} is required.");
+
+static bool Enabled(string name, bool defaultValue)
+{
+    string? value = Environment.GetEnvironmentVariable(name);
+    return value is null
+        ? defaultValue
+        : value.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("on", StringComparison.OrdinalIgnoreCase);
+}
+
+static TracerProvider? ConfigureTelemetry(string sourceName)
+{
+    if (!Enabled("TELEMETRY_ENABLED", true))
+    {
+        return null;
+    }
+
+    TracerProviderBuilder builder = Sdk.CreateTracerProviderBuilder()
+        .SetResourceBuilder(
+            ResourceBuilder.CreateDefault()
+                .AddService("mcp-error-comparison-maf", serviceVersion: "0.1.0")
+                .AddAttributes(
+                    new Dictionary<string, object>
+                    {
+                        ["deployment.environment"] =
+                            Environment.GetEnvironmentVariable("DEPLOYMENT_ENVIRONMENT")
+                            ?? "local",
+                    }))
+        .AddSource(sourceName);
+
+    if (Enabled("TELEMETRY_CONSOLE", true))
+    {
+        builder.AddConsoleExporter();
+    }
+    if (!string.IsNullOrWhiteSpace(
+        Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")))
+    {
+        builder.AddOtlpExporter();
+    }
+    return builder.Build();
+}
 
 static Uri RequiredResponsesEndpoint()
 {
@@ -94,6 +140,8 @@ try
     AITool codeInterpreter = FoundryAITool.CreateCodeInterpreterTool(
         new CodeInterpreterToolContainer(
             CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([])));
+    const string telemetrySource = "mcp-error-comparison.maf";
+    using TracerProvider? tracerProvider = ConfigureTelemetry(telemetrySource);
 
     var transport = new HttpClientTransport(new HttpClientTransportOptions
     {
@@ -121,11 +169,19 @@ try
     Console.WriteLine(
         $"{{\"event\":\"mcp.tools\",\"count\":{mcpTools.Count}}}");
 
-    AIAgent agent = responsesClient.AsAIAgent(
+    AIAgent baseAgent = responsesClient.AsAIAgent(
             model: deployment,
             instructions: instructions,
             name: "GitHubRepositoryDiscovery",
             tools: [.. mcpTools.Cast<AITool>(), codeInterpreter]);
+    AIAgent agent = tracerProvider is null
+        ? baseAgent
+        : baseAgent.AsBuilder()
+            .UseOpenTelemetry(
+                telemetrySource,
+                telemetry => telemetry.EnableSensitiveData =
+                    Enabled("TELEMETRY_INCLUDE_CONTENT", false))
+            .Build();
 
     var response = await agent.RunAsync(
         args.Length == 0 ? defaultPrompt : string.Join(' ', args));

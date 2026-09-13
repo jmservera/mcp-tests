@@ -1,9 +1,12 @@
 import asyncio
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from app import (
     HarnessStageTimeout,
@@ -12,6 +15,7 @@ from app import (
     invoke_agent,
     load_environment,
 )
+from telemetry import AgentTelemetry
 
 
 class FakeAdapter:
@@ -36,7 +40,7 @@ class FakeAgent:
     def __init__(self, delay):
         self.delay = delay
 
-    async def ainvoke(self, _input):
+    async def ainvoke(self, _input, config=None):
         await asyncio.sleep(self.delay)
         return {"messages": []}
 
@@ -76,6 +80,62 @@ class TimeoutBoundaryTests(unittest.IsolatedAsyncioTestCase):
                     "dotenv-deployment",
                     os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
                 )
+
+    def test_telemetry_records_structured_tool_error_when_enabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "telemetry.jsonl"
+            with patch.dict(
+                os.environ,
+                {
+                    "TELEMETRY_FILE": str(path),
+                    "TELEMETRY_INCLUDE_CONTENT": "true",
+                },
+                clear=True,
+            ):
+                telemetry = AgentTelemetry({"search_repositories"})
+                with telemetry.tracer.start_as_current_span("invoke.agent"):
+                    failed_run_id = uuid4()
+                    telemetry.handler.on_tool_start(
+                        {"name": "search_repositories"},
+                        '{"query":"test"}',
+                        run_id=failed_run_id,
+                    )
+                    telemetry.handler.on_tool_end(
+                        SimpleNamespace(
+                            status="error",
+                            content={"code": "RATE_LIMITED", "retryable": True},
+                        ),
+                        run_id=failed_run_id,
+                    )
+                    recovery_run_id = uuid4()
+                    telemetry.handler.on_tool_start(
+                        {"name": "search_repositories"},
+                        '{"query":"test fallback"}',
+                        run_id=recovery_run_id,
+                    )
+                    telemetry.handler.on_tool_end(
+                        SimpleNamespace(status="success", content={"items": []}),
+                        run_id=recovery_run_id,
+                    )
+                telemetry.shutdown()
+
+            records = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            failed, recovered = records[:2]
+            self.assertEqual("execute_tool.search_repositories", failed["name"])
+            self.assertEqual("ERROR", failed["status"])
+            self.assertEqual(
+                "error", failed["attributes"]["gen_ai.tool.result.status"]
+            )
+            self.assertIn(
+                "RATE_LIMITED",
+                failed["attributes"]["gen_ai.tool.call.result"],
+            )
+            self.assertEqual("UNSET", recovered["status"])
+            self.assertEqual(failed["trace_id"], recovered["trace_id"])
+            self.assertEqual(failed["parent_span_id"], recovered["parent_span_id"])
 
     async def test_discovery_timeout_has_mcp_stage(self):
         with self.assertRaises(HarnessStageTimeout) as raised:
