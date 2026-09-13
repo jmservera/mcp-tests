@@ -8,9 +8,10 @@ using OpenAI.Responses;
 using System.ClientModel.Primitives;
 
 const string defaultPrompt =
-    "Find the best open-source repositories for building a production Model Context Protocol gateway. " +
-    "Rank at least five candidates and create a score chart.";
-
+    "After identifying my username, make the first search_repositories call with this query verbatim. Do not split or simplify it:"+
+    "user:jmservera (books OR library OR catalog OR doc OR docx OR pdf OR html OR epub OR markdown OR jpeg OR tiff)"+
+    "When the recoverable validation error is returned, follow its instructions and retry using smaller searches. Then rank the repositories and open the requested Windows desktop client PR.";
+    
 static string Required(string name) =>
     Environment.GetEnvironmentVariable(name)
     ?? throw new InvalidOperationException($"{name} is required.");
