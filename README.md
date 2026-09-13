@@ -11,11 +11,24 @@ Four minimal examples run the same repository-discovery instructions against the
 
 The shared system prompt is [`agent-instructions.md`](agent-instructions.md). The examples intentionally do not wrap all failures in a common exception type because the native behavior is what this repository compares.
 
-## Common test prompt
+## Structured-error test
 
-> Find the best open-source repositories for building a production Model Context Protocol gateway. Rank at least five candidates and create a score chart.
+The executable harnesses use a deliberately over-complex `search_repositories` query as their default prompt. The GitHub MCP server returns a structured, recoverable validation error, after which the agent is expected to follow the returned guidance, retry with smaller searches, and continue the task.
 
 Do not use private or organization-scoped repositories for the comparison.
+
+## Observed results
+
+Results recorded on September 13, 2026:
+
+| Harness | Test status | Observed structured-error behavior |
+|---|---|---|
+| LangChain Python | Verified | The MCP error is returned as an error tool message that remains visible to the agent; the agent can revise the query and continue. |
+| Microsoft Agent Framework .NET | Verified | The structured MCP tool error remains in the agent interaction, allowing a subsequent corrected tool call. |
+| Bedrock AgentCore | Verified | The harness preserves the structured MCP tool error for the agent, which can recover by changing its next tool call. |
+| Microsoft Copilot Studio | Not yet tested | No behavior is claimed until the same scenario is run in Copilot Studio. |
+
+These results verify the MCP structured tool-error path exercised by this repository; they are not a general conformance certification for every MCP feature or failure mode.
 
 ## Common failure scenarios
 

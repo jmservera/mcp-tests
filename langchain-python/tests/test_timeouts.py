@@ -15,7 +15,7 @@ from app import (
     invoke_agent,
     load_environment,
 )
-from telemetry import AgentTelemetry
+from telemetry import AgentTelemetry, enabled
 
 
 class FakeAdapter:
@@ -46,6 +46,14 @@ class FakeAgent:
 
 
 class TimeoutBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    def test_telemetry_is_enabled_by_default_and_accepts_truthy_values(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(enabled("TELEMETRY_ENABLED", True))
+        with patch.dict(
+            os.environ, {"TELEMETRY_INCLUDE_CONTENT": "true"}, clear=True
+        ):
+            self.assertTrue(enabled("TELEMETRY_INCLUDE_CONTENT", False))
+
     def test_azure_openai_model_uses_configured_deployment(self):
         environment = {
             "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
