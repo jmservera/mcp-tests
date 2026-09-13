@@ -2,5 +2,7 @@ azure-identity>=1.25,<2
 langchain[mcp]>=1.4.0,<2
 langchain-openai>=1.0.0,<2
 matplotlib>=3.9,<4
+opentelemetry-exporter-otlp-proto-grpc>=1.38,<2
+opentelemetry-sdk>=1.38,<2
 pandas>=2.2,<3
 python-dotenv>=1.1,<2

@@ -240,7 +240,8 @@ async def run(prompt: str) -> None:
             tools=[*mcp_tools, code_interpreter],
             system_prompt=load_instructions(),
         )
-        if enabled("TELEMETRY_ENABLED", True):
+        if os.getenv("TELEMETRY_ENABLED", "false").lower() == "true":
+            print(json.dumps({"event": "telemetry.enabled"}))
             telemetry = AgentTelemetry({tool.name for tool in mcp_tools})
             with telemetry.tracer.start_as_current_span("invoke.agent") as span:
                 span.set_attribute("gen_ai.operation.name", "invoke_agent")
