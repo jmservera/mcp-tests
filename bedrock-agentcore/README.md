@@ -63,4 +63,6 @@ python invoke.py
 - **Unreachable:** create a temporary harness tool whose URL is `https://127.0.0.1:1/mcp/`.
 - **Runtime:** run `agentcore invoke --verbose` and compare the raw stream with `invoke.py`; runtime failures are printed from `runtimeClientError`.
 
+`invoke.py` does not add retries, so managed-harness retry behavior remains observable. It validates the SDK response and known event payloads, then writes failures as JSON with `event`, `stage`, `type`, and `message` fields. Native `runtimeClientError` messages retain that event name as their stage; SDK call failures, malformed responses, and lazy stream failures use distinct host-side stages.
+
 Official docs: [AgentCore harness](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness.html), [tools](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-tools.html), and [streaming errors](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-get-started.html#harness-streaming-format).
