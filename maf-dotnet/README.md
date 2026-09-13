@@ -4,6 +4,8 @@ Uses Microsoft Agent Framework with Azure OpenAI's Responses API and the officia
 
 `FoundryAITool.CreateCodeInterpreterTool` is retained only as the MAF adapter for the OpenAI Responses hosted tool; model requests are created by `AzureOpenAIClient`, not `AIProjectClient`.
 
+The MAF and Azure OpenAI package versions are intentionally aligned: `Microsoft.Agents.AI.*` `1.1.0` and `Azure.AI.OpenAI` `2.9.0-beta.1` both use `OpenAI` `2.9.1`. Updating only one side can cause a runtime `MissingMethodException`.
+
 ## Run
 
 ```bash

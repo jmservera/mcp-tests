@@ -41,6 +41,22 @@ try
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "agent-instructions.md"));
     int timeoutSeconds = int.Parse(
         Environment.GetEnvironmentVariable("MCP_TIMEOUT_SECONDS") ?? "30");
+    string? managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+    var credential = new DefaultAzureCredential(
+        new DefaultAzureCredentialOptions
+        {
+            ExcludeEnvironmentCredential = true,
+            ManagedIdentityClientId = string.IsNullOrWhiteSpace(managedIdentityClientId)
+                ? null
+                : managedIdentityClientId,
+        });
+    var responsesClient = new AzureOpenAIClient(
+        new Uri(endpoint),
+        credential)
+        .GetResponsesClient();
+    AITool codeInterpreter = FoundryAITool.CreateCodeInterpreterTool(
+        new CodeInterpreterToolContainer(
+            CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([])));
 
     var transport = new HttpClientTransport(new HttpClientTransportOptions
     {
@@ -68,24 +84,7 @@ try
     Console.WriteLine(
         $"{{\"event\":\"mcp.tools\",\"count\":{mcpTools.Count}}}");
 
-    AITool codeInterpreter = FoundryAITool.CreateCodeInterpreterTool(
-        new CodeInterpreterToolContainer(
-            CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([])));
-
-    string? managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
-    var credential = new DefaultAzureCredential(
-        new DefaultAzureCredentialOptions
-        {
-            ExcludeEnvironmentCredential = true,
-            ManagedIdentityClientId = string.IsNullOrWhiteSpace(managedIdentityClientId)
-                ? null
-                : managedIdentityClientId,
-        });
-    AIAgent agent = new AzureOpenAIClient(
-        new Uri(endpoint),
-        credential)
-        .GetResponsesClient()
-        .AsAIAgent(
+    AIAgent agent = responsesClient.AsAIAgent(
             model: deployment,
             instructions: instructions,
             name: "GitHubRepositoryDiscovery",
