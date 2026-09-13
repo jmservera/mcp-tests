@@ -1,4 +1,3 @@
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
@@ -6,6 +5,7 @@ using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using OpenAI.Responses;
+using System.ClientModel.Primitives;
 
 const string defaultPrompt =
     "Find the best open-source repositories for building a production Model Context Protocol gateway. " +
@@ -14,6 +14,41 @@ const string defaultPrompt =
 static string Required(string name) =>
     Environment.GetEnvironmentVariable(name)
     ?? throw new InvalidOperationException($"{name} is required.");
+
+static Uri RequiredResponsesEndpoint()
+{
+    string value = Required("AZURE_OPENAI_ENDPOINT");
+    if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? endpoint)
+        || endpoint.Scheme != Uri.UriSchemeHttps)
+    {
+        throw new InvalidOperationException(
+            "AZURE_OPENAI_ENDPOINT must be an absolute HTTPS endpoint.");
+    }
+
+    string path = endpoint.AbsolutePath.TrimEnd('/');
+    if (path.EndsWith("/responses", StringComparison.OrdinalIgnoreCase))
+    {
+        path = path[..^"/responses".Length];
+    }
+    if (string.IsNullOrEmpty(path))
+    {
+        path = "/openai/v1";
+    }
+    if (!path.EndsWith("/openai/v1", StringComparison.OrdinalIgnoreCase))
+    {
+        throw new InvalidOperationException(
+            "AZURE_OPENAI_ENDPOINT must be an Azure OpenAI Responses base endpoint, " +
+            "for example 'https://<resource-name>.openai.azure.com/openai/v1'.");
+    }
+
+    var builder = new UriBuilder(endpoint)
+    {
+        Path = path,
+        Query = string.Empty,
+        Fragment = string.Empty,
+    };
+    return builder.Uri;
+}
 
 static void LoadEnvironment()
 {
@@ -32,7 +67,7 @@ static void LoadEnvironment()
 try
 {
     LoadEnvironment();
-    string endpoint = Required("AZURE_OPENAI_ENDPOINT");
+    Uri endpoint = RequiredResponsesEndpoint();
     string deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")
         ?? "gpt-4.1-mini";
     string mcpUrl = Environment.GetEnvironmentVariable("MCP_SERVER_URL")
@@ -50,10 +85,11 @@ try
                 ? null
                 : managedIdentityClientId,
         });
-    var responsesClient = new AzureOpenAIClient(
-        new Uri(endpoint),
-        credential)
-        .GetResponsesClient();
+    var responsesClient = new ResponsesClient(
+        authenticationPolicy: new BearerTokenPolicy(
+            credential,
+            "https://ai.azure.com/.default"),
+        options: new ResponsesClientOptions { Endpoint = endpoint });
     AITool codeInterpreter = FoundryAITool.CreateCodeInterpreterTool(
         new CodeInterpreterToolContainer(
             CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([])));
