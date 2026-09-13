@@ -1,7 +1,17 @@
 import asyncio
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from app import HarnessStageTimeout, discover_mcp_tools, invoke_agent
+from app import (
+    HarnessStageTimeout,
+    create_model,
+    discover_mcp_tools,
+    invoke_agent,
+    load_environment,
+)
 
 
 class FakeAdapter:
@@ -32,6 +42,41 @@ class FakeAgent:
 
 
 class TimeoutBoundaryTests(unittest.IsolatedAsyncioTestCase):
+    def test_azure_openai_model_uses_configured_deployment(self):
+        environment = {
+            "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
+            "AZURE_OPENAI_DEPLOYMENT_NAME": "test-deployment",
+            "AZURE_OPENAI_API_VERSION": "2024-10-21",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            model = create_model()
+        self.assertEqual("test-deployment", model.deployment_name)
+        self.assertEqual("2024-10-21", model.openai_api_version)
+        self.assertTrue(callable(model.azure_ad_token_provider))
+
+    def test_dotenv_loads_without_overriding_host_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "AZURE_OPENAI_ENDPOINT=https://dotenv.openai.azure.com/\n"
+                "AZURE_OPENAI_DEPLOYMENT_NAME=dotenv-deployment\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"AZURE_OPENAI_ENDPOINT": "https://host.openai.azure.com/"},
+                clear=True,
+            ):
+                load_environment(path)
+                self.assertEqual(
+                    "https://host.openai.azure.com/",
+                    os.environ["AZURE_OPENAI_ENDPOINT"],
+                )
+                self.assertEqual(
+                    "dotenv-deployment",
+                    os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+                )
+
     async def test_discovery_timeout_has_mcp_stage(self):
         with self.assertRaises(HarnessStageTimeout) as raised:
             await discover_mcp_tools(FakeAdapter(enter_delay=0.05), 0.01)

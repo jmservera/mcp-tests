@@ -8,11 +8,14 @@ from pathlib import Path
 
 import matplotlib
 import pandas as pd
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from dotenv import load_dotenv
 from fastmcp.client import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from langchain.agents import create_agent
 from langchain.mcp import MCPAdapter
 from langchain.tools import tool
+from langchain_openai import AzureChatOpenAI
 
 
 DEFAULT_PROMPT = (
@@ -40,6 +43,10 @@ def load_instructions() -> str:
     )
 
 
+def load_environment(path: Path | None = None) -> None:
+    load_dotenv(path or Path(__file__).with_name(".env"), override=False)
+
+
 def create_mcp_client() -> Client:
     url = os.getenv("MCP_SERVER_URL", "https://api.githubcopilot.com/mcp/")
     auth_mode = os.getenv("MCP_AUTH_MODE", "bearer").lower()
@@ -55,6 +62,22 @@ def create_mcp_client() -> Client:
         headers={"X-MCP-Readonly": "true", "X-MCP-Toolsets": "repos"},
     )
     return Client(transport)
+
+
+def create_model() -> AzureChatOpenAI:
+    credential = DefaultAzureCredential(
+        exclude_environment_credential=True,
+        managed_identity_client_id=os.getenv("AZURE_CLIENT_ID") or None,
+    )
+    return AzureChatOpenAI(
+        azure_deployment=required("AZURE_OPENAI_DEPLOYMENT_NAME"),
+        azure_endpoint=required("AZURE_OPENAI_ENDPOINT"),
+        azure_ad_token_provider=get_bearer_token_provider(
+            credential,
+            "https://cognitiveservices.azure.com/.default",
+        ),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+    )
 
 
 def timeout_seconds(name: str, default: str) -> float:
@@ -187,7 +210,7 @@ def code_interpreter(repository_metadata_json: str) -> str:
 async def run(prompt: str) -> None:
     mcp_timeout = timeout_seconds("MCP_TIMEOUT_SECONDS", "30")
     agent_timeout = timeout_seconds("AGENT_RUN_TIMEOUT_SECONDS", "180")
-    model = os.getenv("MODEL", "openai:gpt-4.1-mini")
+    model = create_model()
     print(json.dumps({"event": "mcp.connect", "url": os.getenv("MCP_SERVER_URL", "default")}))
 
     adapter = MCPAdapter(create_mcp_client())
@@ -220,6 +243,7 @@ async def run(prompt: str) -> None:
 
 
 def main() -> int:
+    load_environment()
     parser = argparse.ArgumentParser()
     parser.add_argument("prompt", nargs="?", default=DEFAULT_PROMPT)
     args = parser.parse_args()

@@ -1,5 +1,6 @@
-using Azure.AI.Projects;
+using Azure.AI.OpenAI;
 using Azure.Identity;
+using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
@@ -14,10 +15,25 @@ static string Required(string name) =>
     Environment.GetEnvironmentVariable(name)
     ?? throw new InvalidOperationException($"{name} is required.");
 
+static void LoadEnvironment()
+{
+    string workingDirectoryPath = Path.Combine(Environment.CurrentDirectory, ".env");
+    string projectPath = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env"));
+    string? path = File.Exists(workingDirectoryPath)
+        ? workingDirectoryPath
+        : File.Exists(projectPath) ? projectPath : null;
+    if (path is not null)
+    {
+        Env.NoClobber().Load(path);
+    }
+}
+
 try
 {
-    string endpoint = Required("AZURE_AI_PROJECT_ENDPOINT");
-    string deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+    LoadEnvironment();
+    string endpoint = Required("AZURE_OPENAI_ENDPOINT");
+    string deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")
         ?? "gpt-4.1-mini";
     string mcpUrl = Environment.GetEnvironmentVariable("MCP_SERVER_URL")
         ?? "https://api.githubcopilot.com/mcp/";
@@ -56,7 +72,19 @@ try
         new CodeInterpreterToolContainer(
             CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([])));
 
-    AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    string? managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+    var credential = new DefaultAzureCredential(
+        new DefaultAzureCredentialOptions
+        {
+            ExcludeEnvironmentCredential = true,
+            ManagedIdentityClientId = string.IsNullOrWhiteSpace(managedIdentityClientId)
+                ? null
+                : managedIdentityClientId,
+        });
+    AIAgent agent = new AzureOpenAIClient(
+        new Uri(endpoint),
+        credential)
+        .GetResponsesClient()
         .AsAIAgent(
             model: deployment,
             instructions: instructions,

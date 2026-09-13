@@ -47,13 +47,16 @@ Capture these fields for each run:
 
 The hosted endpoint supports OAuth discovery. The local code examples also accept an already-issued token through `GITHUB_MCP_TOKEN`, which keeps authentication setup outside the comparison code. Never commit tokens or generated `.env` files.
 
+The LangChain and Microsoft Agent Framework examples load their local `.env` file before configuration and use `DefaultAzureCredential` for Azure OpenAI. Managed identity is used when deployed to Azure; local developers can authenticate with `az login`. Both use `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT_NAME`, with optional `AZURE_CLIENT_ID` for a user-assigned managed identity.
+
 ## Documentation reviewed
 
+- [LangChain AzureChatOpenAI](https://docs.langchain.com/oss/python/integrations/chat/azure_chat_openai)
 - [LangChain MCP](https://docs.langchain.com/oss/python/langchain/mcp)
 - [LangChain MCP authentication](https://docs.langchain.com/oss/python/langchain/mcp/auth)
 - [Microsoft Agent Framework MCP tools](https://learn.microsoft.com/en-us/agent-framework/agents/tools/local-mcp-tools)
+- [Microsoft Agent Framework Azure OpenAI provider](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/model-providers/azure-openai)
 - [Microsoft Agent Framework Code Interpreter](https://learn.microsoft.com/en-us/agent-framework/agents/tools/code-interpreter)
 - [AgentCore harness tools](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-tools.html)
 - [Copilot Studio MCP onboarding](https://learn.microsoft.com/en-us/microsoft-copilot-studio/mcp-add-existing-server-to-agent)
 - [GitHub remote MCP server](https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md)
-
