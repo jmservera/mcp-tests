@@ -1,0 +1,53 @@
+{
+  "task_id": "mcp-error-harness-examples",
+  "task_slug": "mcp-error-harness-examples",
+  "parent_task": null,
+  "mode": "manual",
+  "active_phase": "Follow-up",
+  "status": "completed",
+  "session_status": "stopped",
+  "artifact_paths": {
+    "research": ".copilot-tracking/research/2026-09-13/mcp-error-harness-examples-research.md",
+    "plan": ".copilot-tracking/plans/2026-09-13/mcp-error-harness-examples-plan.md",
+    "details": ".copilot-tracking/details/2026-09-13/mcp-error-harness-examples-phase-details.md",
+    "critique": ".copilot-tracking/reviews/plans/2026-09-13/mcp-error-harness-examples-plan-critique.md",
+    "changes": ".copilot-tracking/changes/2026-09-13/mcp-error-harness-examples-changes.md",
+    "review": ".copilot-tracking/reviews/logs/2026-09-13/mcp-error-harness-examples-review.md"
+  },
+  "confirmed_decisions": [
+    {
+      "decision": "Research executed and planning readiness recorded as Ready.",
+      "status": "confirmed",
+      "evidence": ".copilot-tracking/research/2026-09-13/mcp-error-harness-examples-research.md"
+    },
+    {
+      "decision": "One plan critique executed with Revise verdict; PC-001 and PC-002 were resolved directly before implementation.",
+      "status": "confirmed",
+      "evidence": ".copilot-tracking/reviews/plans/2026-09-13/mcp-error-harness-examples-plan-critique.md"
+    },
+    {
+      "decision": "One post-implementation review executed with Defects found outcome.",
+      "status": "confirmed",
+      "evidence": ".copilot-tracking/reviews/logs/2026-09-13/mcp-error-harness-examples-review.md"
+    }
+  ],
+  "blockers": [],
+  "next_action": {
+    "phase": "Follow-up",
+    "action": "Select a ranked review follow-up for a later implementation lifecycle."
+  },
+  "prioritized_follow_ups": [
+    {
+      "rank": 1,
+      "task": "Bind repository_metadata_json into the Copilot Studio Code Interpreter prompt tool (RV-002).",
+      "rationale": "Small documentation/configuration correction with direct impact on whether one of four harnesses can complete ranking and chart generation.",
+      "evidence": ".copilot-tracking/reviews/logs/2026-09-13/mcp-error-harness-examples-review.md#rv-002-medium-copilot-studio-code-interpreter-prompt-lacks-an-input-binding"
+    },
+    {
+      "rank": 2,
+      "task": "Separate LangChain MCP connection/discovery timeout from the overall agent-run timeout (RV-001).",
+      "rationale": "Prevents healthy long-running comparisons from being misclassified as MCP failures; requires a small source and validation change.",
+      "evidence": ".copilot-tracking/reviews/logs/2026-09-13/mcp-error-harness-examples-review.md#rv-001-medium-langchain-mcp-timeout-also-limits-the-complete-agent-run"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+langchain[mcp]<2,>=1.4.0
+langchain-openai<2,>=1.0.0
+matplotlib<4,>=3.9
+pandas<3,>=2.2

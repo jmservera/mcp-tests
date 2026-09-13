@@ -1,0 +1,59 @@
+# GitHub MCP error harness comparison
+
+Four minimal examples run the same repository-discovery instructions against the hosted GitHub Copilot MCP server:
+
+| Harness | Example | Native error surface |
+|---|---|---|
+| LangChain Python | [`langchain-python/`](langchain-python/) | MCP `isError` becomes an error `ToolMessage`; transport/session failures raise |
+| Microsoft Agent Framework .NET | [`maf-dotnet/`](maf-dotnet/) | MCP discovery and invocation failures surface as .NET exceptions or tool results |
+| Bedrock AgentCore managed harness | [`bedrock-agentcore/`](bedrock-agentcore/) | Runtime failures arrive as `runtimeClientError` stream events |
+| Microsoft Copilot Studio | [`copilot-studio/`](copilot-studio/) | Connection creation/test diagnostics and managed conversation/tool errors |
+
+The shared system prompt is [`agent-instructions.md`](agent-instructions.md). The examples intentionally do not wrap all failures in a common exception type because the native behavior is what this repository compares.
+
+## Common test prompt
+
+> Find the best open-source repositories for building a production Model Context Protocol gateway. Rank at least five candidates and create a score chart.
+
+Do not use private or organization-scoped repositories for the comparison.
+
+## Common failure scenarios
+
+Run the same scenarios in each harness and record whether the model sees the failure, whether the harness retries, and what reaches the caller.
+
+| Scenario | Configuration | Expected category |
+|---|---|---|
+| Normal | `https://api.githubcopilot.com/mcp/` with valid authorization | Tool discovery and calls succeed |
+| Unauthorized | Real endpoint with a missing or invalid token/connection | OAuth challenge or authentication failure |
+| Unreachable | `https://127.0.0.1:1/mcp/` | Connection/transport failure |
+| Tool-level validation | Ask for an over-complex GitHub search or invalid arguments | MCP tool result reports an error while the connection remains usable |
+| Empty results | Ask for an intentionally improbable repository query | Agent should explain the empty set and request/refine criteria |
+
+For executable examples, override `MCP_SERVER_URL=https://127.0.0.1:1/mcp/` to reproduce the unreachable case. In Copilot Studio, create a temporary second MCP connection with that URL.
+
+## Comparison worksheet
+
+Capture these fields for each run:
+
+1. Did MCP tool discovery complete?
+2. Was the error delivered to the model, raised to host code, or converted to a runtime event?
+3. Did the harness or agent retry? How many times?
+4. Were alternate queries/tools attempted?
+5. Did the final response acknowledge missing data without fabrication?
+6. Did the process exit/fail, or continue with partial results?
+7. Were logs/traces sufficient to reconstruct the sequence?
+
+## Authentication
+
+The hosted endpoint supports OAuth discovery. The local code examples also accept an already-issued token through `GITHUB_MCP_TOKEN`, which keeps authentication setup outside the comparison code. Never commit tokens or generated `.env` files.
+
+## Documentation reviewed
+
+- [LangChain MCP](https://docs.langchain.com/oss/python/langchain/mcp)
+- [LangChain MCP authentication](https://docs.langchain.com/oss/python/langchain/mcp/auth)
+- [Microsoft Agent Framework MCP tools](https://learn.microsoft.com/en-us/agent-framework/agents/tools/local-mcp-tools)
+- [Microsoft Agent Framework Code Interpreter](https://learn.microsoft.com/en-us/agent-framework/agents/tools/code-interpreter)
+- [AgentCore harness tools](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-tools.html)
+- [Copilot Studio MCP onboarding](https://learn.microsoft.com/en-us/microsoft-copilot-studio/mcp-add-existing-server-to-agent)
+- [GitHub remote MCP server](https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md)
+

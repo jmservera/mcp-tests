@@ -1,0 +1,6 @@
+[project]
+name = "agentcore-github-mcp-errors"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["boto3>=1.40,<2"]
+
